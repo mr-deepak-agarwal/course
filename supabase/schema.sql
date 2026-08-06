@@ -151,3 +151,33 @@ join profiles p on p.id = cert.student_id
 join courses c on c.id = cert.course_id;
 
 grant select on certificate_public to anon, authenticated;
+
+-- ============================================================
+-- Auto-create a profile row whenever a new auth user signs up.
+-- Runs as SECURITY DEFINER so it bypasses RLS — this replaces
+-- any client-side insert into `profiles`, which would otherwise
+-- fail until the user's session is fully authenticated (e.g. if
+-- email confirmation is required).
+-- ============================================================
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, full_name, stream, college)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'full_name', ''),
+    coalesce(new.raw_user_meta_data->>'stream', 'Other'),
+    new.raw_user_meta_data->>'college'
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();

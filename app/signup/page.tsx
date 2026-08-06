@@ -14,6 +14,7 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [confirmEmailSent, setConfirmEmailSent] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,6 +24,9 @@ export default function SignupPage() {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: { full_name: fullName, stream, college },
+      },
     });
 
     if (signUpError || !data.user) {
@@ -31,21 +35,31 @@ export default function SignupPage() {
       return;
     }
 
-    const { error: profileError } = await supabase.from("profiles").insert({
-      id: data.user.id,
-      full_name: fullName,
-      stream,
-      college,
-    });
-
-    if (profileError) {
-      setError(profileError.message);
+    // The profiles row is created server-side by a database trigger
+    // (see supabase/schema.sql) reading this metadata, so it works
+    // even before email confirmation. If email confirmation is
+    // required, there's no session yet — send them to check email
+    // instead of the dashboard.
+    if (!data.session) {
       setLoading(false);
+      setConfirmEmailSent(true);
       return;
     }
 
     router.push("/dashboard");
     router.refresh();
+  }
+
+  if (confirmEmailSent) {
+    return (
+      <div className="max-w-md mx-auto px-6 py-16 text-center">
+        <h1 className="font-display text-3xl font-semibold mb-3">Check your email</h1>
+        <p className="text-ink/60 text-sm">
+          We sent a confirmation link to <span className="text-ink">{email}</span>. Click it,
+          then log in to start the course.
+        </p>
+      </div>
+    );
   }
 
   return (
