@@ -14,6 +14,9 @@ export default async function Navbar() {
           Job-Ready Portal
         </Link>
         <nav className="flex items-center gap-6 text-sm">
+          <Link href="/verify" className="hover:text-signal">
+            Verify a certificate
+          </Link>
           {user ? (
             <>
               <Link href="/dashboard" className="hover:text-signal">

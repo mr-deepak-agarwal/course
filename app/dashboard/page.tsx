@@ -39,12 +39,20 @@ export default async function DashboardPage() {
               <p className="text-sm text-ink/60 mb-4">{c.description}</p>
 
               {cert ? (
-                <Link
-                  href={`/verify/${cert.certificate_code}`}
-                  className="stamp text-xs text-signal"
-                >
-                  ✓ Certified — view certificate
-                </Link>
+                <div className="flex flex-wrap items-center gap-4">
+                  <Link
+                    href={`/verify/${cert.certificate_code}`}
+                    className="stamp text-xs text-signal"
+                  >
+                    ✓ Certified — view certificate
+                  </Link>
+                  <a
+                    href={`/api/certificate/${cert.certificate_code}`}
+                    className="stamp text-xs text-ink/50 hover:text-signal"
+                  >
+                    Download PDF
+                  </a>
+                </div>
               ) : (
                 <Link
                   href={`/courses/${c.slug}`}

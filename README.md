@@ -20,12 +20,19 @@ your next course (BTech, MCA, MTech content, etc).
 ## Setup
 
 1. **Create a Supabase project** at supabase.com.
-2. In the SQL editor, run `supabase/schema.sql`, then `supabase/seed_mern.sql`.
+2. In the SQL editor, run, in order: `supabase/schema.sql`,
+   `supabase/seed_mern.sql`, `supabase/patch_01_secure_quiz.sql`, then
+   `supabase/patch_02_lesson_progress.sql`. All four are required —
+   patch_01 moves scoring and certificate issuance server-side, patch_02
+   adds lesson tracking and gates the test behind finishing the course.
 3. Swap the placeholder `video_url` values in `seed_mern.sql` (or update the
    `lessons` table directly) for your real unlisted YouTube/Vimeo embed
    links — format: `https://www.youtube.com/embed/VIDEO_ID`.
 4. Copy `.env.example` to `.env.local` and fill in your project URL + anon
-   key (Supabase dashboard → Project Settings → API).
+   key (Supabase dashboard → Project Settings → API), plus
+   `NEXT_PUBLIC_SITE_URL`. Set that to your real domain before demoing —
+   certificate QR codes encode it, and a localhost QR won't open on a
+   student's phone.
 5. Install and run:
    ```
    npm install
@@ -35,11 +42,54 @@ your next course (BTech, MCA, MTech content, etc).
    MERN course, take the test, and check the certificate + its public
    `/verify/[code]` link.
 
+## Certificates & verification
+
+A certificate is a row in `certificates` holding a 12-character
+`certificate_code`. Nothing is stored as a file — the PDF is rebuilt from
+that code on every request, so re-downloads work forever and cost no
+storage.
+
+- `app/api/certificate/[code]/route.ts` — renders the A4-landscape PDF with
+  `pdf-lib`, embeds a QR code pointing back at the verify URL, and returns it
+  as an attachment. Public: anyone holding the code can download it.
+- `app/verify/page.tsx` — the page you point colleges at. Paste a code (or a
+  full verify URL) and it routes through.
+- `app/verify/[code]/page.tsx` — where a QR scan lands. Shows the certificate
+  on screen with its QR and a Download PDF button.
+- `app/verify/[code]/not-found.tsx` — shown when a code doesn't match, which
+  is the answer to "what if someone fakes one?"
+
+## Security notes for the demo
+
+`supabase/patch_01_secure_quiz.sql` fixes three things that matter if you're
+demoing in a room full of CS students:
+
+- The browser no longer receives `correct_index`. It reads `questions_public`,
+  a view without that column.
+- Scoring, the attempt record, and certificate issuance happen inside the
+  `submit_quiz()` Postgres function. A student can't insert a certificate for
+  themselves any more.
+- `verify_certificate(code)` replaces the open grant on `certificate_public`,
+  so nobody can dump the full list of certificate holders with the anon key.
+
+## Lesson progress
+
+`lesson_progress` (added by `patch_02_lesson_progress.sql`) records one row
+per lesson a student marks complete via the button at the bottom of each
+lesson in `components/LessonViewer.tsx`. `components/CourseProgress.tsx`
+holds that state, shows the progress bar, and only links to the test once
+every lesson is checked off. The same rule is enforced again inside
+`submit_quiz()` in Postgres — a student calling the RPC directly, past the
+disabled button, still gets rejected server-side.
+
+This is presence-based (did they click "mark complete"), not proof they
+watched the video or read every word — there's no way to guarantee that
+without more invasive tracking (watch-time on the video, scroll tracking).
+Good enough to say "the test is gated behind the material" in a demo;
+tighten it later if you need stronger evidence.
+
 ## Notes on what's deliberately left simple
 
-- **Certificates** are on-page + a public verification URL (no PDF). Add a
-  PDF export later if you need a downloadable file — `@react-pdf/renderer`
-  or a serverless screenshot of the verify page both work well.
 - **No admin UI yet** — courses/lessons/quizzes are managed via SQL or the
   Supabase table editor. Worth building once you have 3-4 courses and are
   tired of writing inserts by hand.

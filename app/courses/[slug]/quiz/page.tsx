@@ -8,7 +8,6 @@ type Question = {
   id: string;
   question: string;
   options: string[];
-  correct_index: number;
   order_index: number;
 };
 
@@ -16,7 +15,6 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
   const supabase = createClient();
   const router = useRouter();
 
-  const [courseId, setCourseId] = useState<string | null>(null);
   const [courseTitle, setCourseTitle] = useState("");
   const [quizId, setQuizId] = useState<string | null>(null);
   const [passingScore, setPassingScore] = useState(70);
@@ -24,9 +22,12 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{ score: number; passed: boolean; code?: string } | null>(
-    null
-  );
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    score: number;
+    passed: boolean;
+    code?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -40,7 +41,6 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
         setLoading(false);
         return;
       }
-      setCourseId(course.id);
       setCourseTitle(course.title);
 
       const { data: quiz } = await supabase
@@ -56,64 +56,41 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
       setQuizId(quiz.id);
       setPassingScore(quiz.passing_score);
 
+      // questions_public deliberately has no correct_index column —
+      // the answer key never leaves the database.
       const { data: qs } = await supabase
-        .from("questions")
-        .select("id, question, options, correct_index, order_index")
+        .from("questions_public")
+        .select("id, question, options, order_index")
         .eq("quiz_id", quiz.id)
         .order("order_index");
 
-      setQuestions(qs ?? []);
+      setQuestions((qs as Question[]) ?? []);
       setLoading(false);
     }
     load();
   }, [params.slug]);
 
   async function handleSubmit() {
-    if (!quizId || !courseId) return;
+    if (!quizId) return;
     setSubmitting(true);
+    setError(null);
 
-    const total = questions.length;
-    const correct = questions.filter((q) => answers[q.id] === q.correct_index).length;
-    const score = total > 0 ? Math.round((correct / total) * 100) : 0;
-    const passed = score >= passingScore;
+    // Scoring, the attempt record, and certificate issuance all happen
+    // inside submit_quiz() in Postgres. The client only sends choices.
+    const { data, error: rpcError } = await supabase.rpc("submit_quiz", {
+      p_quiz_id: quizId,
+      p_answers: answers,
+    });
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
+    const row = (data as { score: number; passed: boolean; certificate_code: string | null }[] | null)?.[0];
+
+    if (rpcError || !row) {
+      setError(rpcError?.message ?? "Could not submit your test. Please try again.");
       setSubmitting(false);
       return;
     }
 
-    await supabase.from("quiz_attempts").insert({
-      student_id: user.id,
-      quiz_id: quizId,
-      score,
-      passed,
-    });
-
-    let code: string | undefined;
-    if (passed) {
-      const { data: existing } = await supabase
-        .from("certificates")
-        .select("certificate_code")
-        .eq("student_id", user.id)
-        .eq("course_id", courseId)
-        .maybeSingle();
-
-      if (existing) {
-        code = existing.certificate_code;
-      } else {
-        const { data: cert } = await supabase
-          .from("certificates")
-          .insert({ student_id: user.id, course_id: courseId })
-          .select("certificate_code")
-          .single();
-        code = cert?.certificate_code;
-      }
-    }
-
-    setResult({ score, passed, code });
+    setResult({ score: row.score, passed: row.passed, code: row.certificate_code });
     setSubmitting(false);
   }
 
@@ -124,7 +101,7 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
   if (questions.length === 0) {
     return (
       <div className="max-w-2xl mx-auto px-6 py-16">
-        <p className="text-ink/50">This course doesn't have a test set up yet.</p>
+        <p className="text-ink/50">This course doesn&apos;t have a test set up yet.</p>
       </div>
     );
   }
@@ -139,12 +116,20 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
             <p className="text-signal font-medium mb-8">
               You passed — {courseTitle} certificate issued.
             </p>
-            <button
-              onClick={() => router.push(`/verify/${result.code}`)}
-              className="bg-signal text-paper px-6 py-3 rounded font-medium hover:bg-signalDark transition-colors"
-            >
-              View your certificate
-            </button>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button
+                onClick={() => router.push(`/verify/${result.code}`)}
+                className="bg-signal text-paper px-6 py-3 rounded font-medium hover:bg-signalDark transition-colors"
+              >
+                View your certificate
+              </button>
+              <a
+                href={`/api/certificate/${result.code}`}
+                className="border border-line px-6 py-3 rounded hover:border-signal transition-colors"
+              >
+                Download PDF
+              </a>
+            </div>
           </>
         ) : (
           <>
@@ -168,7 +153,10 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
   return (
     <div className="max-w-2xl mx-auto px-6 py-14">
       <p className="stamp text-xs text-signal mb-2">{courseTitle}</p>
-      <h1 className="font-display text-3xl font-semibold mb-8">Final Test</h1>
+      <h1 className="font-display text-3xl font-semibold mb-2">Final Test</h1>
+      <p className="text-ink/60 text-sm mb-8">
+        {questions.length} questions · {passingScore}% to pass
+      </p>
 
       <div className="space-y-8">
         {questions.map((q, i) => (
@@ -197,6 +185,15 @@ export default function QuizPage({ params }: { params: { slug: string } }) {
           </div>
         ))}
       </div>
+
+      {error && (
+        <div className="mt-6 text-sm text-red-600">
+          <p>{error}</p>
+          <a href={`/courses/${params.slug}`} className="underline">
+            Back to course
+          </a>
+        </div>
+      )}
 
       <button
         onClick={handleSubmit}

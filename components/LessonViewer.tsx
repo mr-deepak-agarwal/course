@@ -11,17 +11,29 @@ type Lesson = {
   order_index: number;
 };
 
-type Module = {
+export type Module = {
   id: string;
   title: string;
   order_index: number;
   lessons: Lesson[];
 };
 
-export default function LessonViewer({ modules }: { modules: Module[] }) {
+export default function LessonViewer({
+  modules,
+  completedIds,
+  onMarkComplete,
+  saving,
+}: {
+  modules: Module[];
+  completedIds: Set<string>;
+  onMarkComplete: (lessonId: string) => void;
+  saving: string | null;
+}) {
   const allLessons = modules.flatMap((m) => m.lessons);
   const [activeId, setActiveId] = useState<string | undefined>(allLessons[0]?.id);
   const active = allLessons.find((l) => l.id === activeId);
+  const activeIndex = allLessons.findIndex((l) => l.id === activeId);
+  const next = activeIndex >= 0 ? allLessons[activeIndex + 1] : undefined;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-8">
@@ -35,12 +47,23 @@ export default function LessonViewer({ modules }: { modules: Module[] }) {
                 <li key={l.id}>
                   <button
                     onClick={() => setActiveId(l.id)}
-                    className={`text-left w-full text-sm px-2 py-1.5 rounded transition-colors ${
+                    className={`flex items-center gap-2 text-left w-full text-sm px-2 py-1.5 rounded transition-colors ${
                       l.id === activeId
                         ? "bg-signal text-paper"
                         : "hover:bg-paper text-ink/80"
                     }`}
                   >
+                    <span
+                      className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] shrink-0 ${
+                        completedIds.has(l.id)
+                          ? l.id === activeId
+                            ? "bg-paper text-signal"
+                            : "bg-signal text-paper"
+                          : "border border-current opacity-40"
+                      }`}
+                    >
+                      {completedIds.has(l.id) ? "✓" : ""}
+                    </span>
                     {l.title}
                   </button>
                 </li>
@@ -66,10 +89,33 @@ export default function LessonViewer({ modules }: { modules: Module[] }) {
               </div>
             )}
             {active.content && (
-              <div className="prose prose-sm max-w-none text-ink/80">
+              <div className="prose prose-sm max-w-none text-ink/80 mb-6">
                 <ReactMarkdown>{active.content}</ReactMarkdown>
               </div>
             )}
+
+            <div className="flex items-center gap-3 pt-4 border-t border-line">
+              {completedIds.has(active.id) ? (
+                <span className="stamp text-xs text-signal">✓ Completed</span>
+              ) : (
+                <button
+                  onClick={() => onMarkComplete(active.id)}
+                  disabled={saving === active.id}
+                  className="bg-signal text-paper px-4 py-2 rounded text-sm hover:bg-signalDark transition-colors disabled:opacity-50"
+                >
+                  {saving === active.id ? "Saving…" : "Mark as complete"}
+                </button>
+              )}
+
+              {next && (
+                <button
+                  onClick={() => setActiveId(next.id)}
+                  className="text-sm text-ink/60 hover:text-signal transition-colors"
+                >
+                  Next lesson →
+                </button>
+              )}
+            </div>
           </>
         ) : (
           <p className="text-ink/50">This course has no lessons yet.</p>
