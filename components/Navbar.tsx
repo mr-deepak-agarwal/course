@@ -6,6 +6,7 @@ export default async function Navbar() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  const { data: isAdmin } = user ? await supabase.rpc("is_admin") : { data: false };
 
   return (
     <header className="border-b border-line bg-paper">
@@ -22,6 +23,11 @@ export default async function Navbar() {
               <Link href="/dashboard" className="hover:text-signal">
                 My Courses
               </Link>
+              {isAdmin && (
+                <Link href="/admin" className="hover:text-signal">
+                  Admin
+                </Link>
+              )}
               <form action="/auth/sign-out" method="post">
                 <button className="hover:text-signal" type="submit">
                   Sign out

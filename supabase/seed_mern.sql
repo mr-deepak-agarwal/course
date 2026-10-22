@@ -71,7 +71,7 @@ select id, title, content, video_url, order_index from (
 with course as (select id from courses where slug = 'mern-stack-foundations'),
 new_quiz as (
   insert into quizzes (course_id, title, passing_score)
-  select id, 'MERN Stack Foundations — Final Test', 70 from course
+  select id, 'MERN Stack Foundations — Final Test', 40 from course
   returning id
 )
 insert into questions (quiz_id, question, options, correct_index, order_index)

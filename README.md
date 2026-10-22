@@ -25,6 +25,10 @@ your next course (BTech, MCA, MTech content, etc).
    `supabase/patch_02_lesson_progress.sql`. All four are required —
    patch_01 moves scoring and certificate issuance server-side, patch_02
    adds lesson tracking and gates the test behind finishing the course.
+   Then run `supabase/patch_03_approval_flow.sql` (categories, admin approval,
+   access-gated content, 40% pass mark).
+   Optional: run `supabase/seed_python_ai.sql` (after the patches) to add the
+   21-day **Python for AI** course. Its `video_url` values are NULL until you set them.
 3. Swap the placeholder `video_url` values in `seed_mern.sql` (or update the
    `lessons` table directly) for your real unlisted YouTube/Vimeo embed
    links — format: `https://www.youtube.com/embed/VIDEO_ID`.
@@ -41,6 +45,39 @@ your next course (BTech, MCA, MTech content, etc).
 6. Visit `http://localhost:3000`, sign up as a student, work through the
    MERN course, take the test, and check the certificate + its public
    `/verify/[code]` link.
+
+## Student flow & admin approval
+
+1. A student registers, then sees **My courses**, **Waiting for approval** and
+   **Browse courses** (grouped by category) on `/dashboard`.
+2. They press **Request access** on a course (or open it to see the day-wise
+   syllabus first). This creates an `enrollments` row with `status = 'pending'`.
+3. The admin opens `/admin`, and approves or rejects it (a revoke is also possible).
+4. Once approved, the course appears under **My courses**. Inside the course the
+   lessons are grouped by module (week) and numbered Day 1, Day 2, ...
+   with a progress bar. Marking a day complete saves progress.
+5. When every day is complete, **Take the final test** unlocks. A score of **40% or
+   more** issues the certificate. Anyone with the certificate code can verify and
+   download it at `/verify`.
+
+**Making yourself admin** (once, after you have signed up):
+
+```sql
+insert into admins (user_id)
+select id from auth.users where email = 'YOUR_EMAIL_HERE'
+on conflict do nothing;
+```
+
+Admins live in their own `admins` table, not a flag on `profiles`, because students
+can edit their own profile row and could otherwise promote themselves.
+
+Security is enforced in the database (RLS), not only in the UI: a student cannot
+insert or edit an approved enrollment, cannot read lesson content or questions
+without approval, and `submit_quiz()` rejects unapproved students.
+
+**Adding a course category:** `insert into categories (slug, name, order_index) ...`
+then set `courses.category_id`. Change the pass mark with
+`update quizzes set passing_score = 50 where ...`.
 
 ## Certificates & verification
 

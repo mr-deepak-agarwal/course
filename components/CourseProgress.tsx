@@ -23,30 +23,35 @@ export default function CourseProgress({
     new Set(initialCompletedIds)
   );
   const [saving, setSaving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  async function markComplete(lessonId: string) {
-    if (completedIds.has(lessonId)) return;
+  async function markComplete(lessonId: string): Promise<boolean> {
+    if (completedIds.has(lessonId)) return true;
     setSaving(lessonId);
+    setError(null);
 
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
       setSaving(null);
-      return;
+      return false;
     }
 
-    const { error } = await supabase
+    const { error: upsertError } = await supabase
       .from("lesson_progress")
       .upsert(
         { student_id: user.id, lesson_id: lessonId },
         { onConflict: "student_id,lesson_id" }
       );
 
-    if (!error) {
-      setCompletedIds((prev) => new Set(prev).add(lessonId));
-    }
     setSaving(null);
+    if (upsertError) {
+      setError("Could not save your progress. Please try again.");
+      return false;
+    }
+    setCompletedIds((prev) => new Set(prev).add(lessonId));
+    return true;
   }
 
   const done = completedIds.size;
@@ -55,35 +60,46 @@ export default function CourseProgress({
 
   return (
     <div>
-      {!isCertified && (
-        <div className="mb-6 flex items-center gap-4">
-          <div className="flex-1 h-2 rounded-full bg-line overflow-hidden">
-            <div
-              className="h-full bg-signal transition-all"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-          <span className="stamp text-xs text-ink/50 whitespace-nowrap">
-            {done}/{totalLessons} lessons
+      {/* Progress bar */}
+      <div className="mb-6">
+        <div className="flex justify-between stamp text-xs text-ink/50 mb-2">
+          <span>
+            {done} of {totalLessons} days completed
           </span>
+          <span>{pct}%</span>
+        </div>
+        <div className="h-2 rounded-full bg-line overflow-hidden">
+          <div className="h-full bg-signal transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
 
-          {allComplete ? (
-            <Link
-              href={`/courses/${courseSlug}/quiz`}
-              className="bg-amber text-paper px-4 py-2 rounded text-sm hover:opacity-90 transition-opacity whitespace-nowrap"
-            >
-              Take the test
-            </Link>
-          ) : (
-            <span
-              title="Mark every lesson complete to unlock the test"
-              className="bg-line text-ink/40 px-4 py-2 rounded text-sm whitespace-nowrap cursor-not-allowed"
-            >
-              Take the test
-            </span>
-          )}
+      {/* Unlocks once every day is done */}
+      {!isCertified && allComplete && (
+        <div className="mb-6 border border-amber/50 bg-amber/10 rounded p-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="font-display text-lg font-semibold">
+              You&apos;ve completed all {totalLessons} days.
+            </p>
+            <p className="text-sm text-ink/70">
+              The final test is unlocked. Pass it to earn your certificate.
+            </p>
+          </div>
+          <Link
+            href={`/courses/${courseSlug}/quiz`}
+            className="bg-amber text-paper px-5 py-2.5 rounded font-medium hover:opacity-90 transition-opacity"
+          >
+            Take the final test
+          </Link>
         </div>
       )}
+
+      {!isCertified && !allComplete && totalLessons > 0 && (
+        <p className="mb-6 text-sm text-ink/50">
+          Finish every day to unlock the final test. {totalLessons - done} to go.
+        </p>
+      )}
+
+      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
       <LessonViewer
         modules={modules}

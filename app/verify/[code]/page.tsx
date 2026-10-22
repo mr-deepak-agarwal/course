@@ -7,7 +7,9 @@ import type { CertificateData } from "@/lib/certificate/pdf";
 export default async function VerifyPage({ params }: { params: { code: string } }) {
   const supabase = createClient();
 
-  const { data } = await supabase.rpc("verify_certificate", { p_code: params.code });
+  const { data } = await supabase.rpc("verify_certificate", {
+    p_code: params.code.trim().toLowerCase(),
+  });
   const cert = (data as CertificateData[] | null)?.[0];
 
   if (!cert) notFound();

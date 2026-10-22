@@ -1,207 +1,179 @@
-"use client";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import CourseProgress from "@/components/CourseProgress";
+import RequestAccessButton from "@/components/RequestAccessButton";
+import type { Module } from "@/components/LessonViewer";
+import { stripDayPrefix, type EnrollmentStatus } from "@/lib/course-utils";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-
-type Question = {
-  id: string;
-  question: string;
-  options: string[];
-  order_index: number;
-};
-
-export default function QuizPage({ params }: { params: { slug: string } }) {
+export default async function CoursePage({
+  params,
+}: {
+  params: { slug: string };
+}) {
   const supabase = createClient();
-  const router = useRouter();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const [courseTitle, setCourseTitle] = useState("");
-  const [quizId, setQuizId] = useState<string | null>(null);
-  const [passingScore, setPassingScore] = useState(70);
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [answers, setAnswers] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{
-    score: number;
-    passed: boolean;
-    code?: string | null;
-  } | null>(null);
+  // middleware already redirects signed-out users; this keeps types honest.
+  if (!user) return null;
 
-  useEffect(() => {
-    async function load() {
-      const { data: course } = await supabase
-        .from("courses")
-        .select("id, title")
-        .eq("slug", params.slug)
-        .single();
+  const { data: course } = await supabase
+    .from("courses")
+    .select("id, title, description")
+    .eq("slug", params.slug)
+    .eq("is_published", true)
+    .maybeSingle();
 
-      if (!course) {
-        setLoading(false);
-        return;
-      }
-      setCourseTitle(course.title);
+  if (!course) notFound();
 
-      const { data: quiz } = await supabase
-        .from("quizzes")
-        .select("id, passing_score")
+  const [{ data: enrollment }, { data: isAdmin }] = await Promise.all([
+    supabase
+      .from("enrollments")
+      .select("status")
+      .eq("student_id", user.id)
+      .eq("course_id", course.id)
+      .maybeSingle(),
+    supabase.rpc("is_admin"),
+  ]);
+
+  const status = (enrollment?.status ?? null) as EnrollmentStatus | null;
+  const hasAccess = status === "approved" || !!isAdmin;
+
+  const header = (
+    <>
+      <Link href="/dashboard" className="stamp text-xs text-ink/50 hover:text-signal">
+        ← My courses
+      </Link>
+      <h1 className="font-display text-3xl font-semibold mt-3 mb-2">{course.title}</h1>
+      {course.description && (
+        <p className="text-ink/60 max-w-2xl mb-8">{course.description}</p>
+      )}
+    </>
+  );
+
+  // ------------------------------------------------------------------
+  // No access yet: show the day-wise syllabus (titles only) + request state
+  // ------------------------------------------------------------------
+  if (!hasAccess) {
+    const [{ data: mods }, { data: outline }] = await Promise.all([
+      supabase
+        .from("modules")
+        .select("id, title, order_index")
         .eq("course_id", course.id)
-        .single();
+        .order("order_index"),
+      supabase.from("lesson_outline").select("id, module_id, title, order_index"),
+    ]);
 
-      if (!quiz) {
-        setLoading(false);
-        return;
-      }
-      setQuizId(quiz.id);
-      setPassingScore(quiz.passing_score);
+    let day = 0;
+    const syllabus = (mods ?? []).map((m) => ({
+      ...m,
+      lessons: (outline ?? [])
+        .filter((l) => l.module_id === m.id)
+        .sort((a, b) => a.order_index - b.order_index)
+        .map((l) => ({ ...l, day: ++day })),
+    }));
 
-      // questions_public deliberately has no correct_index column —
-      // the answer key never leaves the database.
-      const { data: qs } = await supabase
-        .from("questions_public")
-        .select("id, question, options, order_index")
-        .eq("quiz_id", quiz.id)
-        .order("order_index");
-
-      setQuestions((qs as Question[]) ?? []);
-      setLoading(false);
-    }
-    load();
-  }, [params.slug]);
-
-  async function handleSubmit() {
-    if (!quizId) return;
-    setSubmitting(true);
-    setError(null);
-
-    // Scoring, the attempt record, and certificate issuance all happen
-    // inside submit_quiz() in Postgres. The client only sends choices.
-    const { data, error: rpcError } = await supabase.rpc("submit_quiz", {
-      p_quiz_id: quizId,
-      p_answers: answers,
-    });
-
-    const row = (data as { score: number; passed: boolean; certificate_code: string | null }[] | null)?.[0];
-
-    if (rpcError || !row) {
-      setError(rpcError?.message ?? "Could not submit your test. Please try again.");
-      setSubmitting(false);
-      return;
-    }
-
-    setResult({ score: row.score, passed: row.passed, code: row.certificate_code });
-    setSubmitting(false);
-  }
-
-  if (loading) {
-    return <div className="max-w-2xl mx-auto px-6 py-16 text-ink/50">Loading test…</div>;
-  }
-
-  if (questions.length === 0) {
     return (
-      <div className="max-w-2xl mx-auto px-6 py-16">
-        <p className="text-ink/50">This course doesn&apos;t have a test set up yet.</p>
-      </div>
-    );
-  }
+      <div className="max-w-3xl mx-auto px-6 py-12">
+        {header}
 
-  if (result) {
-    return (
-      <div className="max-w-2xl mx-auto px-6 py-16 text-center">
-        <p className="stamp text-xs text-ink/50 mb-2">Result</p>
-        <h1 className="font-display text-4xl font-semibold mb-4">{result.score}%</h1>
-        {result.passed ? (
-          <>
-            <p className="text-signal font-medium mb-8">
-              You passed — {courseTitle} certificate issued.
+        <div className="border border-line rounded p-5 bg-panel mb-10 flex flex-wrap items-center justify-between gap-4">
+          {status === "pending" ? (
+            <p className="text-sm">
+              <span className="stamp text-xs text-amber mr-2">⏳ Request sent</span>
+              The admin will approve your access soon. Check back here or on your dashboard.
             </p>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <button
-                onClick={() => router.push(`/verify/${result.code}`)}
-                className="bg-signal text-paper px-6 py-3 rounded font-medium hover:bg-signalDark transition-colors"
-              >
-                View your certificate
-              </button>
-              <a
-                href={`/api/certificate/${result.code}`}
-                className="border border-line px-6 py-3 rounded hover:border-signal transition-colors"
-              >
-                Download PDF
-              </a>
+          ) : (
+            <>
+              <p className="text-sm text-ink/70">
+                {status === "rejected"
+                  ? "Your last request was not approved. You can ask again."
+                  : "Request access and the admin will approve it."}
+              </p>
+              <RequestAccessButton courseId={course.id} wasRejected={status === "rejected"} />
+            </>
+          )}
+        </div>
+
+        <h2 className="font-display text-xl font-semibold mb-4">Syllabus</h2>
+        <div className="space-y-6">
+          {syllabus.map((m) => (
+            <div key={m.id} className="border border-line rounded bg-panel">
+              <p className="stamp text-xs text-ink/50 px-5 py-3 border-b border-line">{m.title}</p>
+              <ul className="divide-y divide-line">
+                {m.lessons.map((l) => (
+                  <li key={l.id} className="px-5 py-2.5 text-sm flex gap-4">
+                    <span className="stamp text-xs text-ink/40 w-14 shrink-0 pt-0.5">Day {l.day}</span>
+                    <span>{stripDayPrefix(l.title)}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </>
-        ) : (
-          <>
-            <p className="text-amber font-medium mb-8">
-              You need {passingScore}% to pass. Review the lessons and try again.
-            </p>
-            <button
-              onClick={() => router.push(`/courses/${params.slug}`)}
-              className="border border-line px-6 py-3 rounded hover:border-signal transition-colors"
-            >
-              Back to course
-            </button>
-          </>
-        )}
+          ))}
+        </div>
       </div>
     );
   }
 
-  const allAnswered = questions.every((q) => answers[q.id] !== undefined);
+  // ------------------------------------------------------------------
+  // Approved (or admin): the full course
+  // ------------------------------------------------------------------
+  const { data: full } = await supabase
+    .from("modules")
+    .select("id, title, order_index, lessons(id, title, content, video_url, order_index)")
+    .eq("course_id", course.id);
+
+  const modules: Module[] = ((full ?? []) as Module[])
+    .map((m) => ({
+      ...m,
+      lessons: [...(m.lessons ?? [])].sort((a, b) => a.order_index - b.order_index),
+    }))
+    .sort((a, b) => a.order_index - b.order_index);
+
+  const lessonIds = modules.flatMap((m) => m.lessons.map((l) => l.id));
+  const totalLessons = lessonIds.length;
+
+  const [{ data: progress }, { data: certificate }] = await Promise.all([
+    supabase
+      .from("lesson_progress")
+      .select("lesson_id")
+      .eq("student_id", user.id)
+      .in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]),
+    supabase
+      .from("certificates")
+      .select("certificate_code")
+      .eq("student_id", user.id)
+      .eq("course_id", course.id)
+      .maybeSingle(),
+  ]);
+
+  const completedIds = (progress ?? []).map((p) => p.lesson_id as string);
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-14">
-      <p className="stamp text-xs text-signal mb-2">{courseTitle}</p>
-      <h1 className="font-display text-3xl font-semibold mb-2">Final Test</h1>
-      <p className="text-ink/60 text-sm mb-8">
-        {questions.length} questions · {passingScore}% to pass
-      </p>
+    <div className="max-w-6xl mx-auto px-6 py-12">
+      {header}
 
-      <div className="space-y-8">
-        {questions.map((q, i) => (
-          <div key={q.id} className="border border-line rounded p-6 bg-panel">
-            <p className="font-medium mb-4">
-              {i + 1}. {q.question}
-            </p>
-            <div className="space-y-2">
-              {q.options.map((opt, idx) => (
-                <label
-                  key={idx}
-                  className={`flex items-center gap-3 border rounded px-3 py-2 cursor-pointer transition-colors ${
-                    answers[q.id] === idx ? "border-signal bg-signal/5" : "border-line"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name={q.id}
-                    checked={answers[q.id] === idx}
-                    onChange={() => setAnswers((a) => ({ ...a, [q.id]: idx }))}
-                  />
-                  <span className="text-sm">{opt}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {error && (
-        <div className="mt-6 text-sm text-red-600">
-          <p>{error}</p>
-          <a href={`/courses/${params.slug}`} className="underline">
-            Back to course
+      {certificate && (
+        <div className="mb-6 border border-signal/40 bg-signal/5 rounded p-4 flex flex-wrap items-center gap-4">
+          <span className="stamp text-xs text-signal">✓ Certified</span>
+          <Link href={`/verify/${certificate.certificate_code}`} className="text-sm underline">
+            View certificate
+          </Link>
+          <a href={`/api/certificate/${certificate.certificate_code}`} className="text-sm underline">
+            Download PDF
           </a>
         </div>
       )}
 
-      <button
-        onClick={handleSubmit}
-        disabled={!allAnswered || submitting}
-        className="mt-8 w-full bg-signal text-paper py-3 rounded font-medium hover:bg-signalDark transition-colors disabled:opacity-40"
-      >
-        {submitting ? "Submitting…" : "Submit test"}
-      </button>
+      <CourseProgress
+        courseSlug={params.slug}
+        modules={modules}
+        totalLessons={totalLessons}
+        initialCompletedIds={completedIds}
+        isCertified={!!certificate}
+      />
     </div>
   );
 }

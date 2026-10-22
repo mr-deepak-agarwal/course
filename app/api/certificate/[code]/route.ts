@@ -14,7 +14,7 @@ export async function GET(
   // verify_certificate is a security-definer function granted to anon,
   // so this works for anyone holding the code — no login required.
   const { data, error } = await supabase.rpc("verify_certificate", {
-    p_code: params.code,
+    p_code: params.code.trim().toLowerCase(),
   });
 
   const cert = (data as CertificateData[] | null)?.[0];
